@@ -9,10 +9,12 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 interface FilingRecord {
-  formType: string;
-  filingDate: string;
-  formattedDate: string;
-  filerName: string;
+  formType: string;              // Full text from Form Type column
+  filingDate: string;            // Date in YYYY-MM-DD format
+  filerName: string;             // Full text from Filer Name column
+  candidateLastName: string;     // Full text from Candidate Last Name column
+  candidateFirstName: string;    // Full text from Candidate First Name column
+  candidateMiddleName: string;   // Full text from Candidate Middle Name column
 }
 
 interface CliOptions {
@@ -79,10 +81,13 @@ function initDatabase(dbPath: string | undefined): DatabaseSync | null {
       form_type TEXT NOT NULL,
       filing_date TEXT NOT NULL,
       filer_name TEXT NOT NULL,
+      candidate_last_name TEXT NOT NULL,
+      candidate_first_name TEXT NOT NULL,
+      candidate_middle_name TEXT NOT NULL,
       file_name TEXT NOT NULL,
       pdf_blob BLOB NOT NULL,
       created_at TEXT DEFAULT (datetime('now')),
-      UNIQUE(form_type, filing_date, filer_name)
+      UNIQUE(form_type, filing_date, filer_name, candidate_last_name, candidate_first_name)
     )
   `);
   
@@ -99,14 +104,23 @@ function savePdfToDb(db: DatabaseSync | null, record: FilingRecord, pdfBuffer: B
     return;
   }
   
-  const filename = `${record.formattedDate}.${record.filerName}.${record.formType}.pdf`;
+  const filename = `${record.filingDate}.${record.filerName}.${record.formType}.pdf`;
   
   const stmt = db.prepare(`
-    INSERT OR REPLACE INTO filings (form_type, filing_date, filer_name, file_name, pdf_blob)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT OR REPLACE INTO filings (form_type, filing_date, filer_name, candidate_last_name, candidate_first_name, candidate_middle_name, file_name, pdf_blob)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `);
   
-  stmt.run(record.formType, record.formattedDate, record.filerName, filename, pdfBuffer);
+  stmt.run(
+    record.formType, 
+    record.filingDate, 
+    record.filerName, 
+    record.candidateLastName,
+    record.candidateFirstName,
+    record.candidateMiddleName,
+    filename, 
+    pdfBuffer
+  );
 }
 
 /**
@@ -115,23 +129,35 @@ function savePdfToDb(db: DatabaseSync | null, record: FilingRecord, pdfBuffer: B
 function extractFilingRecord(
   formTypeText: string | null,
   filingDateText: string | null,
-  candidateLastName: string | null
+  filerNameText: string | null,
+  candidateLastNameText: string | null,
+  candidateFirstNameText: string | null,
+  candidateMiddleNameText: string | null
 ): FilingRecord | null {
-  if (!filingDateText || !candidateLastName || !formTypeText) {
+  if (!filingDateText || !formTypeText) {
     return null;
   }
 
-  // Parse filing date (format: M/D/YYYY)
-  const filingDate = filingDateText.trim();
-  const [month, day, year] = filingDate.split('/');
-  const formattedDate = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+  // Parse filing date (format: M/D/YYYY) and convert to YYYY-MM-DD
+  const filingDateRaw = filingDateText.trim();
+  const [month, day, year] = filingDateRaw.split('/');
+  const filingDate = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
 
-  // Extract form type (e.g., "410" from "410 Statement of Organization, Form 410")
-  const formType = formTypeText.trim().match(/^(\d+(-[A-Z])?)/)?.[1] || 'unknown';
+  // Store exact values from columns
+  const formType = formTypeText.trim();
+  const filerName = filerNameText?.trim() || '';
+  const candidateLastName = candidateLastNameText?.trim() || '';
+  const candidateFirstName = candidateFirstNameText?.trim() || '';
+  const candidateMiddleName = candidateMiddleNameText?.trim() || '';
 
-  const filerName = candidateLastName.trim();
-
-  return { formType, filingDate, formattedDate, filerName };
+  return { 
+    formType, 
+    filingDate, 
+    filerName,
+    candidateLastName,
+    candidateFirstName,
+    candidateMiddleName
+  };
 }
 
 /**
@@ -212,7 +238,7 @@ async function processFilingRecord(
   debugMode: boolean
 ): Promise<boolean> {
   try {
-    console.log(`Processing: ${record.formattedDate}.${record.filerName}.${record.formType}.pdf`);
+    console.log(`Processing: ${record.filingDate}.${record.filerName}.${record.formType}.pdf`);
 
     // Click the PDF link to open the iframe
     console.log('  Clicking PDF link...');
@@ -256,7 +282,7 @@ async function processFilingRecord(
     // Verify and save PDF
     if (isValidPdf(buffer)) {
       savePdfToDb(db, record, buffer);
-      console.log(`✓ Saved to database: ${record.formattedDate}.${record.filerName}.${record.formType}.pdf`);
+      console.log(`✓ Saved to database: ${record.filingDate}.${record.filerName}.${record.formType}.pdf`);
       
       // Close the popup
       await page.keyboard.press('Escape');
@@ -368,12 +394,25 @@ async function processCurrentPage(
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
 
-    // Extract data from the row
+    // Extract data from all columns (matching the screenshot)
+    // Column indices: 0=Form Type, 1=Filing Date, 2=Filer Name, 
+    // 3=Candidate Last Name, 4=Candidate First Name, 5=Candidate Middle Name
     const formTypeText = await row.locator('td').nth(0).textContent();
     const filingDateText = await row.locator('td').nth(1).textContent();
-    const candidateLastName = await row.locator('td').nth(3).textContent();
+    const filerNameText = await row.locator('td').nth(2).textContent();
+    const candidateLastNameText = await row.locator('td').nth(3).textContent();
+    const candidateFirstNameText = await row.locator('td').nth(4).textContent();
+    const candidateMiddleNameText = await row.locator('td').nth(5).textContent();
 
-    const record = extractFilingRecord(formTypeText, filingDateText, candidateLastName);
+    const record = extractFilingRecord(
+      formTypeText, 
+      filingDateText, 
+      filerNameText,
+      candidateLastNameText,
+      candidateFirstNameText,
+      candidateMiddleNameText
+    );
+    
     if (!record) {
       continue;
     }
