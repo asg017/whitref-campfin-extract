@@ -1,9 +1,12 @@
 {
-  "name": "campfin",
+  "name": "whitref-campfin-extract",
   "type": "module",
   "version": "1.0.0",
-  "description": "",
+  "description": "Campaign finance data extraction and export tools",
   "main": "index.js",
+  "bin": {
+    "whitref-campfin-extract": "./cli.ts"
+  },
   "scripts": {
     "test": "node --test --experimental-strip-types scrape.test.ts",
     "scrape": "node --experimental-strip-types scrape.ts",

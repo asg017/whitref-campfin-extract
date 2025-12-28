@@ -6,40 +6,70 @@ Web scraper for Whittier City campaign finance documents using Playwright.
 
 ```bash
 npm install
+npx playwright install chromium
 ```
 
 ## Usage
 
 The scraper is a CLI tool that downloads PDFs and optionally stores them in a SQLite database.
 
-### Basic Usage
+### Scrape Command
+
+Download campaign finance PDFs for a date range:
 
 ```bash
-npm run scrape -- --start YYYY-MM-DD --end YYYY-MM-DD [-o database.db] [--debug]
+node cli.ts scrape --start YYYY-MM-DD --end YYYY-MM-DD -o database.db
 ```
 
-### CLI Options
-
+**CLI Options:**
 - `--start YYYY-MM-DD` - Start date for filing search (required)
 - `--end YYYY-MM-DD` - End date for filing search (required)
 - `-o <path>` - Path to SQLite database file (optional - if omitted, runs in dry-run mode)
 - `--debug` - Debug mode: keeps browser visible and pauses 5 minutes after each PDF for manual inspection
 
-### Examples
-
-Download all filings and save to database:
+**Examples:**
 ```bash
-npm run scrape -- --start 2025-01-01 --end 2025-12-31 -o campfin.db
+# Download all filings and save to database
+node cli.ts scrape --start 2025-01-01 --end 2025-12-31 -o campfin.db
+
+# Dry-run mode (no database, just test the scraper)
+node cli.ts scrape --start 2025-01-01 --end 2025-12-31
+
+# Debug mode with visible browser and 5-minute pauses
+node cli.ts scrape --start 2025-01-01 --end 2025-12-31 -o campfin.db --debug
 ```
 
-Dry-run mode (no database, just test the scraper):
+### Export Command
+
+Extract PDFs from database to individual files:
+
 ```bash
-npm run scrape -- --start 2025-01-01 --end 2025-12-31
+node cli.ts export database.db -o output-directory
 ```
 
-Debug mode with visible browser and 5-minute pauses:
+**Example:**
 ```bash
-npm run scrape -- --start 2025-01-01 --end 2025-12-31 -o campfin.db --debug
+node cli.ts export campfin.db -o ./2025-pdfs
+```
+
+## Project Structure
+
+```
+cli.ts              # Main CLI entry point
+commands/
+  scrape.ts         # Scrape command implementation
+  export.ts         # Export command implementation
+lib/
+  scraper.ts        # Core scraping logic (reusable functions)
+scrape.test.ts      # Test suite
+```
+
+## Testing
+
+Run the test suite:
+
+```bash
+npm test
 ```
 
 ### Database Schema

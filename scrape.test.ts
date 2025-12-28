@@ -5,96 +5,23 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import {
+  extractFilingRecord,
+  extractSessionKey,
+  buildDownloadUrl,
+  isValidPdf,
+  getPaginationInfo,
+  goToNextPage,
+  extractPdfUrlFromIframe,
+  downloadPdfData,
+  type FilingRecord
+} from './lib/scraper.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Import the functions we want to test
-// (These would normally be exported from scrape.ts)
-
-interface FilingRecord {
-  formType: string;
-  filingDate: string;
-  formattedDate: string;
-  filerName: string;
-}
-
-function extractFilingRecord(
-  formTypeText: string | null,
-  filingDateText: string | null,
-  candidateLastName: string | null
-): FilingRecord | null {
-  if (!filingDateText || !candidateLastName || !formTypeText) {
-    return null;
-  }
-
-  const filingDate = filingDateText.trim();
-  const [month, day, year] = filingDate.split('/');
-  const formattedDate = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
-
-  const formType = formTypeText.trim().match(/^(\d+(-[A-Z])?)/)?.[1] || 'unknown';
-  const filerName = candidateLastName.trim();
-
-  return { formType, filingDate, formattedDate, filerName };
-}
-
-function extractSessionKey(pdfUrl: string): string | null {
-  const keyMatch = pdfUrl.match(/PdfHandler\.axd[^?]*\?key=([a-f0-9]{32})/);
-  return keyMatch ? keyMatch[1] : null;
-}
-
-function buildDownloadUrl(key: string): string {
-  return `https://www.southtechhosting.com/WhittierCity/CampaignDocsWebRetrieval/PdfHandler.axd?key=${key}PdfDownloadSessionKey&download=True&fileName=Form`;
-}
-
-function isValidPdf(buffer: Buffer): boolean {
-  return buffer.length > 100 && 
-         buffer[0] === 0x25 && 
-         buffer[1] === 0x50 && 
-         buffer[2] === 0x44 && 
-         buffer[3] === 0x46;
-}
-
 function calculateSha256(buffer: Buffer): string {
   return crypto.createHash('sha256').update(buffer).digest('hex');
-}
-
-async function getPaginationInfo(page: Page): Promise<{ currentPage: number; totalPages: number; totalItems: number } | null> {
-  try {
-    const pagerText = await page.locator('b.dxp-lead.dxp-summary').textContent({ timeout: 5000 });
-    if (!pagerText) {
-      return null;
-    }
-
-    const match = pagerText.match(/Page (\d+) of (\d+) \((\d+) items\)/);
-    if (!match) {
-      return null;
-    }
-
-    return {
-      currentPage: parseInt(match[1], 10),
-      totalPages: parseInt(match[2], 10),
-      totalItems: parseInt(match[3], 10),
-    };
-  } catch (e) {
-    // Timeout or element not found - no pagination
-    return null;
-  }
-}
-
-async function goToNextPage(page: Page): Promise<boolean> {
-  const nextButton = page.locator('a.dxp-button.dxp-bi:has(img[alt="Next"])');
-  
-  if (await nextButton.count() === 0) {
-    return false;
-  }
-
-  await nextButton.click();
-  await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {
-    console.log('Network idle timeout after pagination, continuing anyway...');
-  });
-  await page.waitForTimeout(2000);
-  return true;
 }
 
 async function performSearch(page: Page, fromDate: string, toDate: string): Promise<void> {
@@ -119,51 +46,25 @@ async function performSearch(page: Page, fromDate: string, toDate: string): Prom
   await page.waitForTimeout(2000);
 }
 
-async function extractPdfUrlFromIframe(page: Page): Promise<string | null> {
-  const frames = page.frames();
-
-  for (const frame of frames) {
-    try {
-      const pdfObject = await frame.locator('object[type="application/pdf"]').first();
-      if (await pdfObject.count() > 0) {
-        const pdfUrl = await pdfObject.getAttribute('data');
-        if (pdfUrl) {
-          return pdfUrl;
-        }
-      }
-    } catch (e) {
-      // Frame might not be accessible, continue
-    }
-  }
-
-  return null;
-}
-
-async function downloadPdfData(page: Page, downloadUrl: string): Promise<Buffer> {
-  const pdfData = await page.evaluate(async (url) => {
-    const response = await fetch(url);
-    const blob = await response.blob();
-    const arrayBuffer = await blob.arrayBuffer();
-    return Array.from(new Uint8Array(arrayBuffer));
-  }, downloadUrl);
-
-  return Buffer.from(pdfData);
-}
-
 describe('Campaign Finance Scraper Tests', () => {
   describe('Unit Tests', () => {
     test('extractFilingRecord - valid data', () => {
       const record = extractFilingRecord(
         '410 Statement of Organization, Form 410',
         '6/30/2025',
-        'Santana'
+        'Santana',
+        'Santana',
+        'John',
+        'A'
       );
 
       assert.deepStrictEqual(record, {
-        formType: '410',
-        filingDate: '6/30/2025',
-        formattedDate: '2025-06-30',
-        filerName: 'Santana'
+        formType: '410 Statement of Organization, Form 410',
+        filingDate: '2025-06-30',
+        filerName: 'Santana',
+        candidateLastName: 'Santana',
+        candidateFirstName: 'John',
+        candidateMiddleName: 'A'
       });
     });
 
@@ -171,19 +72,24 @@ describe('Campaign Finance Scraper Tests', () => {
       const record = extractFilingRecord(
         '410-A Statement of Organization, Form 410 - Amendment',
         '7/29/2025',
-        'Martinez'
+        'Martinez',
+        'Martinez',
+        'Jane',
+        ''
       );
 
       assert.deepStrictEqual(record, {
-        formType: '410-A',
-        filingDate: '7/29/2025',
-        formattedDate: '2025-07-29',
-        filerName: 'Martinez'
+        formType: '410-A Statement of Organization, Form 410 - Amendment',
+        filingDate: '2025-07-29',
+        filerName: 'Martinez',
+        candidateLastName: 'Martinez',
+        candidateFirstName: 'Jane',
+        candidateMiddleName: ''
       });
     });
 
     test('extractFilingRecord - null data', () => {
-      const record = extractFilingRecord(null, null, null);
+      const record = extractFilingRecord(null, null, null, null, null, null);
       assert.strictEqual(record, null);
     });
 
@@ -269,9 +175,19 @@ describe('Campaign Finance Scraper Tests', () => {
       for (const row of rows) {
         const formTypeText = await row.locator('td').nth(0).textContent();
         const filingDateText = await row.locator('td').nth(1).textContent();
-        const candidateLastName = await row.locator('td').nth(3).textContent();
+        const filerNameText = await row.locator('td').nth(2).textContent();
+        const candidateLastNameText = await row.locator('td').nth(3).textContent();
+        const candidateFirstNameText = await row.locator('td').nth(4).textContent();
+        const candidateMiddleNameText = await row.locator('td').nth(5).textContent();
 
-        const record = extractFilingRecord(formTypeText, filingDateText, candidateLastName);
+        const record = extractFilingRecord(
+          formTypeText, 
+          filingDateText, 
+          filerNameText, 
+          candidateLastNameText,
+          candidateFirstNameText,
+          candidateMiddleNameText
+        );
         if (record) {
           records.push(record);
         }
@@ -311,12 +227,22 @@ describe('Campaign Finance Scraper Tests', () => {
       // Extract record info
       const formTypeText = await firstRow.locator('td').nth(0).textContent();
       const filingDateText = await firstRow.locator('td').nth(1).textContent();
-      const candidateLastName = await firstRow.locator('td').nth(3).textContent();
+      const filerNameText = await firstRow.locator('td').nth(2).textContent();
+      const candidateLastNameText = await firstRow.locator('td').nth(3).textContent();
+      const candidateFirstNameText = await firstRow.locator('td').nth(4).textContent();
+      const candidateMiddleNameText = await firstRow.locator('td').nth(5).textContent();
 
-      const record = extractFilingRecord(formTypeText, filingDateText, candidateLastName);
+      const record = extractFilingRecord(
+        formTypeText, 
+        filingDateText, 
+        filerNameText,
+        candidateLastNameText,
+        candidateFirstNameText,
+        candidateMiddleNameText
+      );
       assert.ok(record, 'Should extract valid record');
 
-      console.log(`Testing PDF download for: ${record?.formattedDate}.${record?.filerName}.${record?.formType}`);
+      console.log(`Testing PDF download for: ${record?.filingDate}.${record?.filerName}.${record?.formType}`);
 
       // Click PDF link
       const pdfLink = firstRow.locator('a[id*="DXCBtn"]').first();
