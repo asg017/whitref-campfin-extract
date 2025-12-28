@@ -59,6 +59,44 @@ function calculateSha256(buffer: Buffer): string {
   return crypto.createHash('sha256').update(buffer).digest('hex');
 }
 
+async function getPaginationInfo(page: Page): Promise<{ currentPage: number; totalPages: number; totalItems: number } | null> {
+  try {
+    const pagerText = await page.locator('b.dxp-lead.dxp-summary').textContent({ timeout: 5000 });
+    if (!pagerText) {
+      return null;
+    }
+
+    const match = pagerText.match(/Page (\d+) of (\d+) \((\d+) items\)/);
+    if (!match) {
+      return null;
+    }
+
+    return {
+      currentPage: parseInt(match[1], 10),
+      totalPages: parseInt(match[2], 10),
+      totalItems: parseInt(match[3], 10),
+    };
+  } catch (e) {
+    // Timeout or element not found - no pagination
+    return null;
+  }
+}
+
+async function goToNextPage(page: Page): Promise<boolean> {
+  const nextButton = page.locator('a.dxp-button.dxp-bi:has(img[alt="Next"])');
+  
+  if (await nextButton.count() === 0) {
+    return false;
+  }
+
+  await nextButton.click();
+  await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {
+    console.log('Network idle timeout after pagination, continuing anyway...');
+  });
+  await page.waitForTimeout(2000);
+  return true;
+}
+
 async function performSearch(page: Page, fromDate: string, toDate: string): Promise<void> {
   await page.goto('https://www.southtechhosting.com/WhittierCity/CampaignDocsWebRetrieval/Search/SearchByFiledForm.aspx', {
     timeout: 60000,
@@ -344,6 +382,186 @@ describe('Campaign Finance Scraper Tests', () => {
       // Close popup
       await page.keyboard.press('Escape');
       await page.waitForTimeout(500);
+    });
+
+    test('teardown', async () => {
+      await browser.close();
+    });
+  });
+
+  describe('Pagination Tests', () => {
+    let browser: Browser;
+    let context: BrowserContext;
+    let page: Page;
+
+    test('setup browser', async () => {
+      browser = await chromium.launch({ headless: false });
+      context = await browser.newContext({ acceptDownloads: true });
+      page = await context.newPage();
+    });
+
+    test('getPaginationInfo - parses pagination correctly', { timeout: 60000 }, async () => {
+      // Search for a date range that has multiple pages (2023-2025 should have many results)
+      await performSearch(page, '01/01/2023', '12/31/2025');
+      
+      const paginationInfo = await getPaginationInfo(page);
+      
+      assert.ok(paginationInfo, 'Should detect pagination');
+      assert.ok(paginationInfo!.currentPage >= 1, 'Current page should be at least 1');
+      assert.ok(paginationInfo!.totalPages >= 1, 'Total pages should be at least 1');
+      assert.ok(paginationInfo!.totalItems > 0, 'Total items should be greater than 0');
+      
+      console.log(`Pagination info: Page ${paginationInfo!.currentPage} of ${paginationInfo!.totalPages} (${paginationInfo!.totalItems} items)`);
+      
+      // If there are multiple pages, verify the structure
+      if (paginationInfo!.totalPages > 1) {
+        assert.strictEqual(paginationInfo!.currentPage, 1, 'Should start on page 1');
+      }
+    });
+
+    test('getPaginationInfo - returns null when no pagination', { timeout: 60000 }, async () => {
+      // Search for a very narrow date range that should have few/no results
+      await performSearch(page, '01/01/2020', '01/02/2020');
+      
+      const paginationInfo = await getPaginationInfo(page);
+      
+      // Either null (no results) or a single page
+      if (paginationInfo) {
+        assert.strictEqual(paginationInfo.totalPages, 1, 'Should have only 1 page for narrow date range');
+      }
+    });
+
+    test('goToNextPage - navigates to next page successfully', { timeout: 60000 }, async () => {
+      // Use a date range that we know has multiple pages
+      await performSearch(page, '01/01/2023', '12/31/2025');
+      
+      const initialPagination = await getPaginationInfo(page);
+      
+      // Skip test if only one page
+      if (!initialPagination || initialPagination.totalPages <= 1) {
+        console.log('Skipping: Only one page of results');
+        return;
+      }
+
+      assert.strictEqual(initialPagination.currentPage, 1, 'Should start on page 1');
+      
+      // Go to next page
+      const success = await goToNextPage(page);
+      assert.ok(success, 'Should successfully navigate to next page');
+      
+      // Verify we're on page 2
+      const newPagination = await getPaginationInfo(page);
+      assert.ok(newPagination, 'Should still have pagination info');
+      assert.strictEqual(newPagination!.currentPage, 2, 'Should be on page 2');
+      assert.strictEqual(newPagination!.totalPages, initialPagination.totalPages, 'Total pages should remain the same');
+    });
+
+    test('goToNextPage - returns false on last page', { timeout: 60000 }, async () => {
+      // Search for a range with exactly one page
+      await performSearch(page, '06/01/2025', '08/01/2025');
+      
+      const paginationInfo = await getPaginationInfo(page);
+      
+      if (!paginationInfo || paginationInfo.totalPages !== 1) {
+        console.log('Skipping: Need exactly 1 page for this test');
+        return;
+      }
+      
+      // Try to go to next page when already on last page
+      const success = await goToNextPage(page);
+      assert.strictEqual(success, false, 'Should return false when no next page available');
+    });
+
+    test('pagination loop - processes all pages', { timeout: 120000 }, async () => {
+      // Use a date range with multiple pages
+      await performSearch(page, '01/01/2023', '12/31/2023');
+      
+      const initialPagination = await getPaginationInfo(page);
+      
+      if (!initialPagination || initialPagination.totalPages <= 1) {
+        console.log('Skipping: Only one page of results');
+        return;
+      }
+
+      console.log(`Testing pagination loop with ${initialPagination.totalPages} pages`);
+      
+      let currentPage = 1;
+      const totalPages = initialPagination.totalPages;
+      const recordsPerPage: number[] = [];
+      
+      // Process all pages
+      while (true) {
+        const rows = await page.locator('tr[id*="gridFilers_DXDataRow"]').all();
+        recordsPerPage.push(rows.length);
+        console.log(`Page ${currentPage}: ${rows.length} rows`);
+        
+        if (currentPage >= totalPages) {
+          console.log('Reached last page');
+          break;
+        }
+        
+        const hasNextPage = await goToNextPage(page);
+        
+        if (!hasNextPage) {
+          console.log('No next page button - stopping');
+          break;
+        }
+        
+        currentPage++;
+      }
+      
+      assert.strictEqual(currentPage, totalPages, `Should process all ${totalPages} pages`);
+      assert.strictEqual(recordsPerPage.length, totalPages, 'Should have records count for each page');
+      
+      // Verify total items matches sum of all page records
+      const totalRecords = recordsPerPage.reduce((sum, count) => sum + count, 0);
+      console.log(`Total records across all pages: ${totalRecords}`);
+      console.log(`Expected from pagination: ${initialPagination.totalItems}`);
+      
+      // The total might not match exactly due to timing, but should be close
+      assert.ok(
+        Math.abs(totalRecords - initialPagination.totalItems) <= totalPages,
+        `Total records (${totalRecords}) should be close to pagination total (${initialPagination.totalItems})`
+      );
+    });
+
+    test('pagination snapshot - verify record distribution', { timeout: 90000 }, async () => {
+      // Test with known date range
+      await performSearch(page, '01/01/2023', '12/31/2025');
+      
+      const paginationInfo = await getPaginationInfo(page);
+      
+      if (!paginationInfo) {
+        console.log('Skipping: No pagination detected');
+        return;
+      }
+
+      const snapshot = {
+        dateRange: { from: '01/01/2023', to: '12/31/2025' },
+        totalPages: paginationInfo.totalPages,
+        totalItems: paginationInfo.totalItems,
+        pagesProcessed: 0,
+        recordsFound: 0
+      };
+      
+      // Process first 2 pages (or all if less than 2)
+      const pagesToProcess = Math.min(2, paginationInfo.totalPages);
+      
+      for (let i = 0; i < pagesToProcess; i++) {
+        const rows = await page.locator('tr[id*="gridFilers_DXDataRow"]').all();
+        snapshot.recordsFound += rows.length;
+        snapshot.pagesProcessed++;
+        
+        if (i < pagesToProcess - 1) {
+          await goToNextPage(page);
+        }
+      }
+      
+      console.log(`Pagination snapshot:`, JSON.stringify(snapshot, null, 2));
+      
+      assert.ok(snapshot.totalPages > 0, 'Should have at least 1 page');
+      assert.ok(snapshot.totalItems > 0, 'Should have at least 1 item');
+      assert.ok(snapshot.recordsFound > 0, 'Should find records on pages');
     });
 
     test('teardown', async () => {

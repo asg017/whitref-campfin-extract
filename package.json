@@ -6,7 +6,8 @@
   "main": "index.js",
   "scripts": {
     "test": "node --test --experimental-strip-types scrape.test.ts",
-    "scrape": "node scrape.ts"
+    "scrape": "node --experimental-strip-types scrape.ts",
+    "extract": "node --experimental-strip-types extract-pdfs.ts"
   },
   "keywords": [],
   "author": "",
