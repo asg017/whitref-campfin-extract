@@ -1,0 +1,69 @@
+{
+  "dateRange": {
+    "from": "06/01/2025",
+    "to": "08/01/2025"
+  },
+  "totalRecords": 10,
+  "records": [
+    {
+      "formType": "410",
+      "filingDate": "6/30/2025",
+      "formattedDate": "2025-06-30",
+      "filerName": "Santana"
+    },
+    {
+      "formType": "410",
+      "filingDate": "7/9/2025",
+      "formattedDate": "2025-07-09",
+      "filerName": "Becerra"
+    },
+    {
+      "formType": "410",
+      "filingDate": "7/30/2025",
+      "formattedDate": "2025-07-30",
+      "filerName": "Longoria"
+    },
+    {
+      "formType": "410-A",
+      "filingDate": "6/16/2025",
+      "formattedDate": "2025-06-16",
+      "filerName": ""
+    },
+    {
+      "formType": "410-A",
+      "filingDate": "7/29/2025",
+      "formattedDate": "2025-07-29",
+      "filerName": "Martinez"
+    },
+    {
+      "formType": "410-A",
+      "filingDate": "7/29/2025",
+      "formattedDate": "2025-07-29",
+      "filerName": ""
+    },
+    {
+      "formType": "450",
+      "filingDate": "7/12/2025",
+      "formattedDate": "2025-07-12",
+      "filerName": ""
+    },
+    {
+      "formType": "460",
+      "filingDate": "7/24/2025",
+      "formattedDate": "2025-07-24",
+      "filerName": "Pacheco"
+    },
+    {
+      "formType": "460",
+      "filingDate": "7/28/2025",
+      "formattedDate": "2025-07-28",
+      "filerName": "Vinatieri"
+    },
+    {
+      "formType": "460",
+      "filingDate": "7/28/2025",
+      "formattedDate": "2025-07-28",
+      "filerName": "Dutra"
+    }
+  ]
+}

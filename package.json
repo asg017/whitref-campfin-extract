@@ -1,0 +1,20 @@
+{
+  "name": "campfin",
+  "type": "module",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "node --test --experimental-strip-types scrape.test.ts",
+    "scrape": "node scrape.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "playwright": "^1.57.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5"
+  }
+}
