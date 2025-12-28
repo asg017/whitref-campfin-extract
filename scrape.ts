@@ -354,6 +354,13 @@ async function performSearch(page: Page, fromDate: string, toDate: string): Prom
 
   await page.waitForLoadState('networkidle');
   await page.waitForTimeout(2000);
+
+  // Click on Filing Date header to sort results for consistency
+  console.log('Sorting by Filing Date...');
+  await page.click('#ctl00_GridContent_gridFilers_col1');
+  
+  await page.waitForLoadState('networkidle');
+  await page.waitForTimeout(2000);
 }
 
 /**
