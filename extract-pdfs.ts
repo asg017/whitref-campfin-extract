@@ -32,7 +32,12 @@ console.log(`Extracting PDFs from ${dbPath} to ${outputDir}`);
 
 const db = new DatabaseSync(dbPath);
 
-const stmt = db.prepare('SELECT id, file_name, pdf_blob FROM filings ORDER BY filing_date, id');
+const stmt = db.prepare(`
+  SELECT f.id, f.file_name, p.pdf_blob 
+  FROM filings f
+  JOIN filing_pdfs p ON f.id = p.filing_id
+  ORDER BY f.filing_date, f.id
+`);
 const rows = stmt.all() as Array<{ id: number; file_name: string; pdf_blob: Buffer }>;
 
 console.log(`Found ${rows.length} PDFs to extract`);

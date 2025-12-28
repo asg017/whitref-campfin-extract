@@ -75,6 +75,7 @@ function initDatabase(dbPath: string | undefined): DatabaseSync | null {
   
   const db = new DatabaseSync(dbPath);
   
+  // Create filings metadata table
   db.exec(`
     CREATE TABLE IF NOT EXISTS filings (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -85,9 +86,17 @@ function initDatabase(dbPath: string | undefined): DatabaseSync | null {
       candidate_first_name TEXT NOT NULL,
       candidate_middle_name TEXT NOT NULL,
       file_name TEXT NOT NULL,
-      pdf_blob BLOB NOT NULL,
       created_at TEXT DEFAULT (datetime('now')),
       UNIQUE(form_type, filing_date, filer_name, candidate_last_name, candidate_first_name)
+    )
+  `);
+  
+  // Create PDF blobs table with foreign key
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS filing_pdfs (
+      filing_id INTEGER PRIMARY KEY,
+      pdf_blob BLOB NOT NULL,
+      FOREIGN KEY (filing_id) REFERENCES filings(id) ON DELETE CASCADE
     )
   `);
   
@@ -106,21 +115,34 @@ function savePdfToDb(db: DatabaseSync | null, record: FilingRecord, pdfBuffer: B
   
   const filename = `${record.filingDate}.${record.filerName}.${record.formType}.pdf`;
   
-  const stmt = db.prepare(`
-    INSERT OR REPLACE INTO filings (form_type, filing_date, filer_name, candidate_last_name, candidate_first_name, candidate_middle_name, file_name, pdf_blob)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  // Insert or update the filing metadata
+  const stmtFiling = db.prepare(`
+    INSERT INTO filings (form_type, filing_date, filer_name, candidate_last_name, candidate_first_name, candidate_middle_name, file_name)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(form_type, filing_date, filer_name, candidate_last_name, candidate_first_name) 
+    DO UPDATE SET file_name = excluded.file_name
+    RETURNING id
   `);
   
-  stmt.run(
+  const result = stmtFiling.get(
     record.formType, 
     record.filingDate, 
     record.filerName, 
     record.candidateLastName,
     record.candidateFirstName,
     record.candidateMiddleName,
-    filename, 
-    pdfBuffer
-  );
+    filename
+  ) as { id: number };
+  
+  const filingId = result.id;
+  
+  // Insert or replace the PDF blob
+  const stmtPdf = db.prepare(`
+    INSERT OR REPLACE INTO filing_pdfs (filing_id, pdf_blob)
+    VALUES (?, ?)
+  `);
+  
+  stmtPdf.run(filingId, pdfBuffer);
 }
 
 /**
